@@ -2,12 +2,12 @@ import SwissEph from './swisseph.js';
 
 let swe = null;
 
-// 1. INITIALIZE & SET PATH
+// 1. INITIALIZE ENGINE
 SwissEph({
     locateFile: (path) => path.includes('js/') ? path : `js/${path}`
 }).then(module => {
     swe = module;
-    // Force path to Root (/) immediately
+    // Set internal path to Root (/) immediately
     try { swe.ccall('swe_set_ephe_path', null, ['string'], ['/']); } catch(e){}
     updateStatus("Engine Online.");
     console.log("✅ Wasm Module Initialized");
@@ -16,7 +16,6 @@ SwissEph({
 // 2. API BRIDGE
 const API = {
     julday: (y, m, d, h, f) => swe.ccall('swe_julday', 'number', ['number','number','number','number','number'], [y, m, d, h, f]),
-    
     calc_ut: (jd, body, flags) => {
         const resPtr = swe._malloc(48);
         const errPtr = swe._malloc(256);
@@ -30,7 +29,6 @@ const API = {
             swe._free(resPtr); swe._free(errPtr);
         }
     },
-    
     revjul: (jd, f) => {
          const yr=swe._malloc(4), mo=swe._malloc(4), dy=swe._malloc(4), ut=swe._malloc(8);
          try {
@@ -42,47 +40,57 @@ const API = {
     }
 };
 
-// 3. DATA MANAGER (STRICTLY NO UNDERSCORES)
-async function ensureDataForYear(year, bodyId) {
-    if (year >= -600) return; 
+// 3. FILE MANAGER (Calculates Block & Downloads Dependencies)
+async function ensureDataForYear(year) {
+    // Determine the 600-year block suffix (e.g. m36, m30, _00, _18)
+    let suffix = "";
+    if (year < 0) {
+        // Ancient: -3500 -> m36
+        const base = Math.floor(Math.abs(year) / 600) * 600;
+        // Adjust for block boundaries
+        let startYear = Math.floor((year) / 600) * 600; 
+        let century = Math.abs(startYear) / 100;
+        let cStr = century < 10 ? `0${century}` : `${century}`;
+        suffix = `m${cStr}`;
+    } else {
+        // Modern: 2024 -> _18
+        let startYear = Math.floor(year / 600) * 600;
+        let century = startYear / 100;
+        let cStr = century < 10 ? `0${century}` : `${century}`;
+        suffix = `_${cStr}`;
+    }
 
-    // Constants
-    const prefix = (bodyId === 1) ? 'semo' : 'sepl';
-    const baseYear = Math.floor(year / 600) * 600;
-    const century = Math.abs(baseYear / 100); 
+    // We ALWAYS download both files for the era
+    const requiredFiles = [
+        { name: `sepl${suffix}.se1`, label: "Planets" },
+        { name: `semo${suffix}.se1`, label: "Moon" }
+    ];
 
-    // TARGET NAME: semom36.se1 (No underscore, No .bin)
-    // This is what the engine is asking for in your logs.
-    const engineName = `${prefix}m${century}.se1`;
-    
-    // SERVER NAME: semom36.se1.bin (No underscore, Has .bin)
-    // This is what you confirmed is on the server.
-    const serverName = `${prefix}m${century}.se1.bin`;
-    
-    const url = `assets/ephe/${serverName}`;
-    
-    // Check if we already have it in Root
-    let exists = false;
-    try { swe.FS.stat(`/${engineName}`); exists = true; } catch(e){}
+    for (const file of requiredFiles) {
+        const engineName = file.name;          // seplm36.se1
+        const serverName = `${file.name}.bin`; // seplm36.se1.bin
+        const url = `assets/ephe/${serverName}`;
 
-    if (!exists) {
-        updateStatus(`Downloading ${serverName}...`);
-        
-        try {
-            const resp = await fetch(`${url}?t=${Date.now()}`);
-            if (!resp.ok) throw new Error(`404 Not Found: ${url}`);
-            
-            const buf = await resp.arrayBuffer();
-            if (buf.byteLength < 5000) throw new Error("File too small.");
+        // Check Memory
+        let exists = false;
+        try { swe.FS.stat(`/${engineName}`); exists = true; } catch(e){}
 
-            // Write to Root (/) using the name the engine wants
-            swe.FS.writeFile(`/${engineName}`, new Uint8Array(buf));
-            console.log(`✅ Loaded ${url} -> /${engineName}`);
-            
-        } catch (err) {
-            document.querySelector('#resultsTable tbody').innerHTML = 
-                `<tr><td colspan="5" style="color:red; font-weight:bold;">FAILED: ${serverName}</td></tr>`;
-            throw err;
+        if (!exists) {
+            updateStatus(`Downloading ${file.label} (${suffix})...`);
+            try {
+                const resp = await fetch(`${url}?t=${Date.now()}`);
+                if (!resp.ok) throw new Error(`404 Missing: ${serverName}`);
+                
+                const buf = await resp.arrayBuffer();
+                if (buf.byteLength < 5000) throw new Error("File too small.");
+
+                swe.FS.writeFile(`/${engineName}`, new Uint8Array(buf));
+                console.log(`✅ Loaded ${file.label}: ${url}`);
+            } catch (err) {
+                document.querySelector('#resultsTable tbody').innerHTML = 
+                    `<tr><td colspan="5" style="color:red; font-weight:bold;">MISSING FILE: ${serverName}</td></tr>`;
+                throw new Error(`Critical Missing File: ${serverName}`);
+            }
         }
     }
 }
@@ -102,9 +110,9 @@ export async function runQuery() {
     let lastResults = [];
 
     try {
-        await ensureDataForYear(startY, bodyId);
+        await ensureDataForYear(startY);
         
-        // RE-FORCE PATH TO ROOT (Fixes the "Moon First" issue)
+        // Ensure path is set to Root
         try { swe.ccall('swe_set_ephe_path', null, ['string'], ['/']); } catch(e){}
 
         const rows = [];
@@ -122,13 +130,12 @@ export async function runQuery() {
                 const [ra, dec, dist] = data.result;
                 const dateObj = API.revjul(currentJD, CAL_MODE);
                 const dateStr = `${dateObj.year}-${pad(dateObj.month)}-${pad(dateObj.day)}`;
-                const rowData = {
+                rows.push({
                     date: dateStr, jd: currentJD.toFixed(2),
                     ra: formatHMS(ra), dec: formatDMS(dec), dist: dist.toFixed(5),
                     rawRA: ra, rawDec: dec
-                };
-                rows.push(rowData);
-                lastResults.push(rowData);
+                });
+                lastResults.push(rows[rows.length-1]);
             }
             currentJD += stepSz;
         }
