@@ -21,16 +21,13 @@
                 <option value="4" selected>Mars</option>
                 <option value="5">Jupiter</option>
                 <option value="6">Saturn</option>
-                <option value="7">Uranus</option>
-                <option value="8">Neptune</option>
-                <option value="9">Pluto</option>
             </select>
         </div>
 
         <div class="control-group">
             <label>Start Date (UT)</label>
             <div class="date-row">
-                <input type="number" id="startYear" value="-2500" placeholder="Year">
+                <input type="number" id="startYear" value="-3500" placeholder="Year">
                 <select id="startMonth">
                     <option value="1">Jan</option><option value="2">Feb</option>
                     <option value="3">Mar</option><option value="4">Apr</option>
@@ -44,7 +41,7 @@
         </div>
 
         <div class="control-group">
-            <label>Duration / Steps</label>
+            <label>Steps</label>
             <div class="step-row">
                 <input type="number" id="stepCount" value="10">
                 <select id="stepUnit">
@@ -53,7 +50,6 @@
                     <option value="365.25">Years</option>
                 </select>
             </div>
-            <small>Generates N steps from start date</small>
         </div>
 
         <div class="control-group">
@@ -72,10 +68,10 @@
             <table id="resultsTable">
                 <thead>
                     <tr>
-                        <th>Date (UT)</th>
+                        <th>Date</th>
                         <th>Julian Day</th>
-                        <th>R.A. (ICRF)</th>
-                        <th>Dec. (ICRF)</th>
+                        <th>R.A.</th>
+                        <th>Dec.</th>
                         <th>Dist (AU)</th>
                     </tr>
                 </thead>
@@ -88,7 +84,7 @@
 </div>
 
 <script type="module">
-    import { runQuery, downloadCSV } from './js/app.js?v=3';
+    import { runQuery, downloadCSV } from './js/app.js?v=99';
     window.runQuery = runQuery;
     window.downloadCSV = downloadCSV;
 </script>
