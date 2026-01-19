@@ -25,13 +25,10 @@
     <div id="output">Results will appear here...</div>
 
     <script type="module">
-    // Import the library directly
-    import SwissEph from './js/swisseph.js';
-    
-    // Import your logic
+    // Import from your newly exported app.js
     import { runCalculation } from './js/app.js';
     
-    // Make runCalculation global so the button onclick works
+    // Attach it to the window so the <button onclick="..."> can find it
     window.runCalculation = runCalculation;
 </script>
 </body>

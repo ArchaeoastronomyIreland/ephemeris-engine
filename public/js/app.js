@@ -1,88 +1,122 @@
-// public/js/app.js
+// 1. Import the library directly (Must use ./ to indicate current folder)
+import SwissEph from './swisseph.js';
+
 let swe = null;
 
-// 1. Initialize the Engine
+// 2. Initialize the WebAssembly Engine
 SwissEph({
-    // Tell it where the .wasm file is (in the same folder as this script)
+    // This tells the browser where to find 'swisseph.wasm'
+    // Since index.html is in root, we look inside the 'js/' folder
     locateFile: (path) => `js/${path}`,
 }).then(module => {
     swe = module;
-    document.getElementById('status').innerText = "Engine Ready. Waiting for input.";
+    // Update UI to show we are ready
+    const status = document.getElementById('status');
+    if (status) status.innerText = "Engine Ready. Waiting for input.";
     console.log("Wasm Module Initialized");
 });
 
-async function runCalculation() {
-    if (!swe) return;
-    
-    const year = parseInt(document.getElementById('yearInput').value);
+// 3. EXPORT the function so index.html can import it
+export async function runCalculation() {
+    if (!swe) {
+        alert("Engine still loading...");
+        return;
+    }
+
+    const yearInput = document.getElementById('yearInput');
     const output = document.getElementById('output');
     const status = document.getElementById('status');
     
+    // Default to -2500 if input is empty
+    const year = parseInt(yearInput.value) || -2500;
+
     try {
-        status.innerText = "⏳ Hydrating Data...";
-        
-        // 2. THE HYDRATION STEP
-        // If year is between -3000 and -2400, we need sepl_m30.se1
+        status.innerText = "⏳ Processing...";
+
+        // --- PART A: DATA HYDRATION (The "Archaeo" Logic) ---
+        // If year is between -3000 and -2400, we need the ancient file
         if (year < -2400 && year >= -3000) {
             const filename = 'sepl_m30.se1';
-            const vfsPath = `/ephe/${filename}`;
+            const vfsPath = `/ephe/${filename}`; // Virtual path inside Wasm
             
-            // Check if file is already in VFS (Virtual File System)
+            // Check if file is already loaded in memory
             let fileExists = false;
-            try { swe.FS.stat(vfsPath); fileExists = true; } catch(e) {}
+            try { 
+                swe.FS.stat(vfsPath); 
+                fileExists = true; 
+            } catch(e) { /* File missing, need to download */ }
 
             if (!fileExists) {
-                // Not found? Download it!
-                output.innerText += `\n[System] Fetching ${filename} from server...`;
-                // Note: We fetch the .bin version for GitHub compatibility
+                status.innerText = `⏳ Downloading ${filename}...`;
+                
+                // Fetch the .bin version from your server (GitHub Pages workaround)
                 const resp = await fetch(`assets/ephe/${filename}.bin`);
-                if (!resp.ok) throw new Error("Could not download ephemeris file");
+                
+                if (!resp.ok) {
+                    throw new Error(`Ephemeris file not found: assets/ephe/${filename}.bin`);
+                }
                 
                 const buffer = await resp.arrayBuffer();
                 
-                // Create directory if missing
+                // Create virtual directory if it doesn't exist
                 try { swe.FS.mkdir('/ephe'); } catch(e) {}
                 
-                // Write to Wasm Memory (using the original name without .bin)
+                // Write the binary data to the Wasm Virtual File System
                 swe.FS.writeFile(vfsPath, new Uint8Array(buffer));
-                output.innerText += `\n[System] Data Injected.`;
+                console.log(`Hydrated ${filename}`);
             }
             
-            // Tell Engine to look here
+            // Tell the engine to look in the virtual /ephe folder
             swe.swe_set_ephe_path('/ephe');
         }
+        // -----------------------------------------------------
 
-        // 3. CALCULATE (Mars)
-        // Convert Date to Julian Day (Simplified for demo)
-        // Archaeo-dates require careful calendar conversion, assuming Jan 1 here
-        const julianDay = swe.swe_julday(year, 1, 1, 12, swe.SE_GREG_CAL);
+        // --- PART B: CALCULATION ---
         
-        // Flags: High Precision + Equatorial (RA/Dec) + Speed
+        // 1. Calculate Julian Day (UT)
+        // Note: For 2500 BC, we assume Julian Calendar. 
+        // 12.0 = Noon
+        const julianDay = swe.swe_julday(year, 1, 1, 12, swe.SE_JUL_CAL);
+        
+        // 2. Set Flags
+        // SEFLG_SWIEPH: Use high-precision binary files
+        // SEFLG_EQUATORIAL: Return RA/Dec (Standard for Astronomy)
+        // SEFLG_SPEED: Calculate velocity
         const flags = swe.SEFLG_SWIEPH | swe.SEFLG_EQUATORIAL | swe.SEFLG_SPEED;
         
-        // Execute Calculation (Planet 4 = Mars)
-        const result = swe.swe_calc_ut(julianDay, swe.SE_MARS, flags);
+        // 3. Calculate Mars (Body ID: 4)
+        // returns { rc: number, result: [long/RA, lat/Dec, dist, speed...] }
+        const data = swe.swe_calc_ut(julianDay, swe.SE_MARS, flags);
         
-        // 4. DISPLAY
-        if (result.rc < 0) {
-            output.innerText = `Error: ${result.error}`;
+        // --- PART C: OUTPUT ---
+        if (data.rc < 0) {
+            output.innerText = `Error: ${data.error}`;
+            status.innerText = "Calculation Failed";
         } else {
-            const [ra, dec, dist] = result.result;
+            const ra = data.result[0];   // Right Ascension (Degrees)
+            const dec = data.result[1];  // Declination (Degrees)
+            const dist = data.result[2]; // Distance (AU)
+            
+            // Format RA to Hours (RA / 15)
+            const raHours = Math.floor(ra / 15);
+            const raMin = Math.floor((ra / 15 - raHours) * 60);
+            
             output.innerText = `
             Target: Mars
-            Date: Jan 1, ${year}
-            Ephemeris: ${year < -2400 ? "High Precision (JPL DE431)" : "Standard/Moshier"}
-            ------------------------
-            Right Ascension: ${(ra/15).toFixed(4)} hours
-            Declination:     ${dec.toFixed(4)} degrees
+            Year: ${year} (Jan 1)
+            Mode: ${year < -2400 ? "High Precision (JPL DE431)" : "Standard (Moshier)"}
+            ------------------------------------
+            Right Ascension: ${raHours}h ${raMin}m (${(ra/15).toFixed(4)} h)
+            Declination:     ${dec.toFixed(4)}°
             Distance:        ${dist.toFixed(4)} AU
             `;
-            status.innerText = "Calculation Complete.";
+            
+            status.innerText = "Calculation Complete";
         }
 
     } catch (err) {
         console.error(err);
-        output.innerText = "Error: " + err.message;
-        status.innerText = "Failed.";
+        output.innerText = "System Error: " + err.message;
+        status.innerText = "Error";
     }
 }
