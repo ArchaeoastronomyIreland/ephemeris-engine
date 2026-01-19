@@ -2,14 +2,15 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Archaeo-Ephemeris Generator</title>
+    <title>Archaeo-Ephemeris: Observational</title>
     <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
 
 <div class="app-container">
     <aside class="sidebar">
-        <h2>🔭 Query Parameters</h2>
+        <h2>🔭 Observation Parameters</h2>
+        
         <div class="control-group">
             <label>Target Body</label>
             <select id="bodySelect">
@@ -37,41 +38,74 @@
                 <input type="number" id="startDay" value="1" min="1" max="31">
             </div>
         </div>
+
+        <hr>
+
         <div class="control-group">
-            <label>Steps</label>
+            <h3>📍 Observer Location</h3>
+            <label>Latitude (Decimal)</label>
+            <input type="number" id="obsLat" value="53.694" step="0.001"> <label>Longitude (Decimal)</label>
+            <input type="number" id="obsLon" value="-6.475" step="0.001">
+            
+            <label>Elevation (Meters)</label>
+            <input type="number" id="obsAlt" value="51" step="1">
+        </div>
+
+        <hr>
+
+        <div class="control-group">
+            <h3>🌫 Atmosphere (Refraction)</h3>
+            <div class="step-row">
+                <div>
+                    <label>Temp (°C)</label>
+                    <input type="number" id="atTemp" value="10">
+                </div>
+                <div>
+                    <label>Press (mbar)</label>
+                    <input type="number" id="atPress" value="1013.25">
+                </div>
+            </div>
+        </div>
+
+        <hr>
+
+        <div class="control-group">
+            <label>Duration / Steps</label>
             <div class="step-row">
                 <input type="number" id="stepCount" value="10">
                 <select id="stepUnit">
                     <option value="1">Days</option>
-                    <option value="30">Months (~30d)</option>
+                    <option value="0.041666">Hours</option>
                     <option value="365.25">Years</option>
                 </select>
             </div>
         </div>
+        
         <div class="control-group">
-            <button id="calcBtn" onclick="runQuery()">Generate Ephemeris</button>
+            <button id="calcBtn" onclick="runQuery()">Calculate Alignment</button>
             <button id="dlBtn" onclick="downloadCSV()" disabled class="secondary-btn">Download CSV</button>
         </div>
-        <div id="status" class="status-box">Initializing Engine...</div>
+        <div id="status" class="status-box">System Idle.</div>
     </aside>
 
     <main class="results-area">
         <header>
-            <h1>Ephemeris Output (Geocentric / Equatorial J2000)</h1>
+            <h1>Topocentric Horizon Output</h1>
+            <p>Azimuth (Bearing) & Altitude (True vs Apparent)</p>
         </header>
         <div class="table-wrapper">
             <table id="resultsTable">
                 <thead>
                     <tr>
-                        <th>Date</th>
-                        <th>Julian Day</th>
-                        <th>R.A.</th>
-                        <th>Dec.</th>
-                        <th>Dist (AU)</th>
+                        <th>Date (UT)</th>
+                        <th>Azimuth (°)</th>
+                        <th>True Alt (°)</th>
+                        <th>Apparent Alt (°)</th>
+                        <th>Distance (AU)</th>
                     </tr>
                 </thead>
                 <tbody>
-                    <tr><td colspan="5" style="text-align:center; color:#666;">No data generated yet.</td></tr>
+                    <tr><td colspan="5" style="text-align:center; color:#666;">Ready to calculate.</td></tr>
                 </tbody>
             </table>
         </div>
@@ -79,7 +113,7 @@
 </div>
 
 <script type="module">
-    import { runQuery, downloadCSV } from './js/app.js?v=MASTER_LIST';
+    import { runQuery, downloadCSV } from './js/app.js?v=CLEVER_TOPO';
     window.runQuery = runQuery;
     window.downloadCSV = downloadCSV;
 </script>
