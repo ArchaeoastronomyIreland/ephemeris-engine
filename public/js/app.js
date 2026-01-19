@@ -54,22 +54,18 @@ async function ensureDataForYear(year, bodyId) {
     if (year >= -600) return; 
 
     // Determine Prefix
-    const isMoon = (bodyId === 1);
-    const prefix = isMoon ? 'semo' : 'sepl';
-    
-    // Calculate Century 
+    const prefix = (bodyId === 1) ? 'semo' : 'sepl';
     const baseYear = Math.floor(year / 600) * 600;
     const century = Math.abs(baseYear / 100); 
     
-    // NO UNDERSCORES. Format: seplm36.se1.bin
+    // FILENAME: NO UNDERSCORES (e.g. seplm36.se1.bin)
     const filename = `${prefix}m${century}.se1.bin`;
     
-    // Path: public/assets/ephe/
-    const url = `public/assets/ephe/${filename}`;
+    // URL: assets/ephe/... (NO 'public')
+    const url = `assets/ephe/${filename}`;
 
-    // Internal Path
-    const engineName = `${prefix}m${century}.se1`;
-    const vfsPath = `/ephe/${engineName}`;
+    // INTERNAL PATH: /ephe/seplm36.se1
+    const vfsPath = `/ephe/${prefix}m${century}.se1`;
     
     let exists = false;
     try { swe.FS.stat(vfsPath); exists = true; } catch(e){}
@@ -78,8 +74,25 @@ async function ensureDataForYear(year, bodyId) {
         updateStatus(`Downloading ${filename}...`);
         
         try {
+            // Anti-cache timestamp
             const resp = await fetch(`${url}?t=${Date.now()}`); 
-            if (!resp.ok) throw new Error(`404 Not Found: ${url}`);
+            
+            if (!resp.ok) {
+                // If the "No Underscore" version fails, try the "Underscore" version as a fallback
+                // This covers the specific case where Moon might still be named differently on the server
+                const fallbackUrl = `assets/ephe/${prefix}_m${century}.se1.bin`;
+                console.warn(`Failed ${url}, trying fallback: ${fallbackUrl}`);
+                const resp2 = await fetch(`${fallbackUrl}?t=${Date.now()}`);
+                
+                if (resp2.ok) {
+                    const buf2 = await resp2.arrayBuffer();
+                    swe.FS.writeFile(vfsPath, new Uint8Array(buf2));
+                    console.log(`✅ Loaded Fallback: ${fallbackUrl}`);
+                    return;
+                }
+                
+                throw new Error(`404 Not Found: ${url}`);
+            }
             
             const buf = await resp.arrayBuffer();
             if (buf.byteLength < 5000) throw new Error("File too small. Likely HTML error.");
