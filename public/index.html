@@ -2,34 +2,96 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Archaeoastronomy Engine</title>
-    <style>
-        body { font-family: sans-serif; padding: 2rem; max-width: 800px; margin: 0 auto; }
-        .input-group { margin-bottom: 1rem; padding: 1rem; background: #f0f0f0; border-radius: 8px; }
-        button { padding: 0.5rem 1rem; cursor: pointer; background: #007bff; color: white; border: none; border-radius: 4px; }
-        button:disabled { background: #ccc; }
-        #output { background: #222; color: #0f0; padding: 1rem; white-space: pre-wrap; margin-top: 1rem; border-radius: 4px; }
-        .status { font-size: 0.9em; color: #666; margin-left: 10px; }
-    </style>
+    <title>Archaeo-Ephemeris Generator</title>
+    <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-    <h1>🔭 Archaeoastronomy Kernel</h1>
-    
-    <div class="input-group">
-        <label>Year (negative for BC): </label>
-        <input type="number" id="yearInput" value="-2500">
-        <button id="calcBtn" onclick="runCalculation()">Calculate Mars</button>
-        <span id="status" class="status">Initializing Engine...</span>
-    </div>
 
-    <div id="output">Results will appear here...</div>
+<div class="app-container">
+    <aside class="sidebar">
+        <h2>🔭 Query Parameters</h2>
+        
+        <div class="control-group">
+            <label>Target Body</label>
+            <select id="bodySelect">
+                <option value="0">Sun</option>
+                <option value="1">Moon</option>
+                <option value="2">Mercury</option>
+                <option value="3">Venus</option>
+                <option value="4" selected>Mars</option>
+                <option value="5">Jupiter</option>
+                <option value="6">Saturn</option>
+                <option value="7">Uranus</option>
+                <option value="8">Neptune</option>
+                <option value="9">Pluto</option>
+            </select>
+        </div>
 
-    <script type="module">
-    // Import from your newly exported app.js
-    import { runCalculation } from './js/app.js';
-    
-    // Attach it to the window so the <button onclick="..."> can find it
-    window.runCalculation = runCalculation;
+        <div class="control-group">
+            <label>Start Date (UT)</label>
+            <div class="date-row">
+                <input type="number" id="startYear" value="-2500" placeholder="Year">
+                <select id="startMonth">
+                    <option value="1">Jan</option><option value="2">Feb</option>
+                    <option value="3">Mar</option><option value="4">Apr</option>
+                    <option value="5">May</option><option value="6">Jun</option>
+                    <option value="7">Jul</option><option value="8">Aug</option>
+                    <option value="9">Sep</option><option value="10">Oct</option>
+                    <option value="11">Nov</option><option value="12">Dec</option>
+                </select>
+                <input type="number" id="startDay" value="1" min="1" max="31">
+            </div>
+        </div>
+
+        <div class="control-group">
+            <label>Duration / Steps</label>
+            <div class="step-row">
+                <input type="number" id="stepCount" value="10">
+                <select id="stepUnit">
+                    <option value="1">Days</option>
+                    <option value="30">Months (~30d)</option>
+                    <option value="365.25">Years</option>
+                </select>
+            </div>
+            <small>Generates N steps from start date</small>
+        </div>
+
+        <div class="control-group">
+            <button id="calcBtn" onclick="runQuery()">Generate Ephemeris</button>
+            <button id="dlBtn" onclick="downloadCSV()" disabled class="secondary-btn">Download CSV</button>
+        </div>
+
+        <div id="status" class="status-box">Initializing Engine...</div>
+    </aside>
+
+    <main class="results-area">
+        <header>
+            <h1>Ephemeris Output (Geocentric / Equatorial J2000)</h1>
+        </header>
+        <div class="table-wrapper">
+            <table id="resultsTable">
+                <thead>
+                    <tr>
+                        <th>Date (UT)</th>
+                        <th>Julian Day</th>
+                        <th>R.A. (ICRF)</th>
+                        <th>Dec. (ICRF)</th>
+                        <th>Dist (AU)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr><td colspan="5" style="text-align:center; color:#666;">No data generated yet.</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </main>
+</div>
+
+<script type="module">
+    import { runQuery, downloadCSV } from './js/app.js?v=3';
+    window.runQuery = runQuery;
+    window.downloadCSV = downloadCSV;
 </script>
+
 </body>
 </html>
