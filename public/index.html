@@ -41,7 +41,7 @@
         </div>
 
         <div class="control-group">
-            <label>Steps</label>
+            <label>Duration / Steps</label>
             <div class="step-row">
                 <input type="number" id="stepCount" value="10">
                 <select id="stepUnit">
@@ -68,7 +68,7 @@
             <table id="resultsTable">
                 <thead>
                     <tr>
-                        <th>Date</th>
+                        <th>Date (UT)</th>
                         <th>Julian Day</th>
                         <th>R.A.</th>
                         <th>Dec.</th>
@@ -84,10 +84,10 @@
 </div>
 
 <script type="module">
-    // This v=2024 is critical. It forces the browser to re-download app.js
-    import { runQuery, downloadCSV } from './js/app.js?v=2024';
+    import { runQuery, downloadCSV } from './js/app.js?v=3000';
     
-    // Attach to window so HTML buttons work
+    // EXPOSE TO GLOBAL SCOPE
+    // This connects the 'import' to the 'onclick' in the HTML above
     window.runQuery = runQuery;
     window.downloadCSV = downloadCSV;
 </script>

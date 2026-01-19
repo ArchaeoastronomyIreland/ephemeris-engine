@@ -1,12 +1,11 @@
 import SwissEph from './swisseph.js';
 
 let swe = null;
-let lastResults = []; // Store results for CSV export
+let lastResults = []; 
 
-// --- 1. INITIALIZATION ---
+// 1. Initialize Engine
 SwissEph({
     locateFile: (path) => {
-        // Ensure Wasm is loaded from the correct folder
         if (path.includes('js/')) return path;
         return `js/${path}`;
     }
@@ -16,8 +15,7 @@ SwissEph({
     console.log("✅ Wasm Module Initialized");
 });
 
-// --- 2. MANUAL API BRIDGE (The Fix for 'is not a function') ---
-// This talks directly to the C-code in memory
+// 2. API Bridge
 const API = {
     julday: (year, month, day, hour, calFlag) => {
         return swe.ccall('swe_julday', 'number', 
@@ -26,26 +24,23 @@ const API = {
         );
     },
     calc_ut: (jd, body, flags) => {
-        const resPtr = swe._malloc(48); // Allocate 6 doubles
-        const errPtr = swe._malloc(256); // Allocate error string
+        const resPtr = swe._malloc(48);
+        const errPtr = swe._malloc(256);
         try {
             const rc = swe.ccall('swe_calc_ut', 'number',
                 ['number', 'number', 'number', 'number', 'number'],
                 [jd, body, flags, resPtr, errPtr]
             );
-            
             if (rc < 0) {
                 return { rc, error: swe.UTF8ToString(errPtr) };
             }
-
             const data = [];
             for (let i = 0; i < 6; i++) {
                 data.push(swe.HEAPF64[(resPtr >> 3) + i]);
             }
             return { rc, result: data };
         } finally {
-            swe._free(resPtr);
-            swe._free(errPtr);
+            swe._free(resPtr); swe._free(errPtr);
         }
     },
     revjul: (jd, calFlag) => {
@@ -68,48 +63,54 @@ const API = {
     }
 };
 
-// --- 3. SMART FILE MANAGER (Fixes the "seplm36" vs "sepl_m36" crash) ---
-async function ensureDataForYear(year) {
-    if (year >= -600) return; // Standard data covers modern era
+// 3. SMART FILE MANAGER (STRICT FIX)
+async function ensureDataForYear(year, bodyId) {
+    if (year >= -600) return; 
 
-    // Calculate filename century (e.g. -3500 -> "m36")
+    // Determine Prefix: 'semo' for Moon (ID 1), 'sepl' for others
+    const prefix = (bodyId === 1) ? 'semo' : 'sepl';
+
+    // Calculate Century: -3500 -> "m36"
     const baseYear = Math.floor(year / 600) * 600;
     const century = Math.abs(baseYear / 100); 
     
-    // Server file must be named: sepl_m36.se1.bin
-    const serverFilename = `sepl_m${century}.se1.bin`;
+    // The server file (Must match your GitHub upload)
+    const serverFilename = `${prefix}_m${century}.se1.bin`;
     
-    // Engine might look for underscore OR no underscore. We fix both.
-    const vfsName1 = `sepl_m${century}.se1`;
-    const vfsName2 = `seplm${century}.se1`; 
+    // The Engine wants NO underscore (e.g. semom36.se1)
+    const engineFilename = `${prefix}m${century}.se1`; 
     
-    let exists = false;
-    try { swe.FS.stat(`/${vfsName1}`); exists = true; } catch(e){}
-    try { swe.FS.stat(`/${vfsName2}`); exists = true; } catch(e){}
+    // 1. Check if the ENGINE file exists
+    let engineFileExists = false;
+    try { swe.FS.stat(`/${engineFilename}`); engineFileExists = true; } catch(e){}
 
-    if (!exists) {
-        updateStatus(`Downloading ancient data: ${serverFilename}...`);
+    if (!engineFileExists) {
+        updateStatus(`Downloading ${prefix === 'semo' ? 'Moon' : 'Planet'} data: ${serverFilename}...`);
         
         try {
-            const resp = await fetch(`assets/ephe/${serverFilename}`); 
+            // Add timestamp to prevent browser caching of old 404s
+            const resp = await fetch(`assets/ephe/${serverFilename}?t=${Date.now()}`); 
+            
             if (!resp.ok) {
-                throw new Error(`Server missing file: assets/ephe/${serverFilename}`);
+                throw new Error(`Server returned ${resp.status} for file: assets/ephe/${serverFilename}`);
             }
+            
             const buf = await resp.arrayBuffer();
             const data = new Uint8Array(buf);
             
-            // DOUBLE SAVE FIX: Write to both possible filenames
-            swe.FS.writeFile(`/${vfsName1}`, data);
-            swe.FS.writeFile(`/${vfsName2}`, data);
+            // WRITE DIRECTLY to the filename the engine wants
+            swe.FS.writeFile(`/${engineFilename}`, data);
             
-            console.log(`✅ Hydrated VFS: /${vfsName1} and /${vfsName2}`);
+            // Debug: Prove it's there
+            console.log(`✅ File System Write: /${engineFilename} (${data.length} bytes)`);
+            
         } catch (err) {
             throw new Error(`Data fetch failed: ${err.message}`);
         }
     }
 }
 
-// --- 4. EXPORT: Run Query ---
+// 4. Run Query
 export async function runQuery() {
     if (!swe) { alert("Engine still loading..."); return; }
 
@@ -126,13 +127,14 @@ export async function runQuery() {
     lastResults = [];
 
     try {
-        await ensureDataForYear(startY);
+        // Pass bodyId so we know whether to fetch 'sepl' or 'semo'
+        await ensureDataForYear(startY, bodyId);
 
         const rows = [];
-        const CAL_MODE = startY < 1582 ? 0 : 1; // Julian vs Gregorian switch
+        const CAL_MODE = startY < 1582 ? 0 : 1; 
         
         let currentJD = API.julday(startY, startM, startD, 12, CAL_MODE);
-        const FLAGS = 2 | 256 | 2048; // SwissEph | Speed | Equatorial
+        const FLAGS = 2 | 256 | 2048; 
 
         for (let i = 0; i < count; i++) {
             const data = API.calc_ut(currentJD, bodyId, FLAGS);
@@ -163,11 +165,8 @@ export async function runQuery() {
         }
 
         renderTable(rows);
-        
-        // Enable CSV button
         const dlBtn = document.getElementById('dlBtn');
         if (dlBtn) dlBtn.disabled = false;
-        
         updateStatus(`Done. Generated ${rows.length} steps.`);
 
     } catch (err) {
@@ -177,10 +176,9 @@ export async function runQuery() {
     }
 }
 
-// --- 5. EXPORT: Download CSV ---
+// 5. Download CSV
 export function downloadCSV() {
     if (!lastResults.length) return;
-    
     let csv = "Date,JD,RA_deg,Dec_deg,Dist_AU,RA_hms,Dec_dms\n";
     csv += lastResults.map(r => {
         if (r.date === "Error") return "";
@@ -197,7 +195,7 @@ export function downloadCSV() {
     document.body.removeChild(a);
 }
 
-// --- Utils ---
+// Utils
 function renderTable(rows) {
     const tbody = document.querySelector('#resultsTable tbody');
     tbody.innerHTML = rows.map(r => `
