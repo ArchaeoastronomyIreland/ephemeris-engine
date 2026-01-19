@@ -84,7 +84,10 @@
 </div>
 
 <script type="module">
-    import { runQuery, downloadCSV } from './js/app.js?v=99';
+    // This v=2024 is critical. It forces the browser to re-download app.js
+    import { runQuery, downloadCSV } from './js/app.js?v=2024';
+    
+    // Attach to window so HTML buttons work
     window.runQuery = runQuery;
     window.downloadCSV = downloadCSV;
 </script>
