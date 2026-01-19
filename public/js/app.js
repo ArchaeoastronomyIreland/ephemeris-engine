@@ -3,7 +3,7 @@ import SwissEph from './swisseph.js';
 let swe = null;
 let lastResults = []; 
 
-// 1. Initialize Engine
+// 1. INITIALIZATION
 SwissEph({
     locateFile: (path) => {
         if (path.includes('js/')) return path;
@@ -15,7 +15,7 @@ SwissEph({
     console.log("✅ Wasm Module Initialized");
 });
 
-// 2. API Bridge
+// 2. API BRIDGE (Added 'set_ephe_path')
 const API = {
     julday: (year, month, day, hour, calFlag) => {
         return swe.ccall('swe_julday', 'number', 
@@ -60,57 +60,62 @@ const API = {
          } finally {
              swe._free(yrPtr); swe._free(moPtr); swe._free(dyPtr); swe._free(utPtr);
          }
+    },
+    // NEW: Force the engine to look in Root (/)
+    set_ephe_path: (path) => {
+        // Check if function exists (it should based on your logs)
+        try {
+            swe.ccall('swe_set_ephe_path', null, ['string'], [path]);
+            console.log(`✅ Path set to: ${path}`);
+        } catch (e) {
+            console.warn("Could not set path:", e);
+        }
     }
 };
 
-// 3. SMART FILE MANAGER (STRICT FIX)
+// 3. SMART FILE MANAGER (With Sanity Check)
 async function ensureDataForYear(year, bodyId) {
     if (year >= -600) return; 
 
-    // Determine Prefix: 'semo' for Moon (ID 1), 'sepl' for others
     const prefix = (bodyId === 1) ? 'semo' : 'sepl';
-
-    // Calculate Century: -3500 -> "m36"
     const baseYear = Math.floor(year / 600) * 600;
     const century = Math.abs(baseYear / 100); 
     
-    // The server file (Must match your GitHub upload)
     const serverFilename = `${prefix}_m${century}.se1.bin`;
-    
-    // The Engine wants NO underscore (e.g. semom36.se1)
     const engineFilename = `${prefix}m${century}.se1`; 
     
-    // 1. Check if the ENGINE file exists
-    let engineFileExists = false;
-    try { swe.FS.stat(`/${engineFilename}`); engineFileExists = true; } catch(e){}
+    // Check if file exists
+    let exists = false;
+    try { swe.FS.stat(`/${engineFilename}`); exists = true; } catch(e){}
 
-    if (!engineFileExists) {
-        updateStatus(`Downloading ${prefix === 'semo' ? 'Moon' : 'Planet'} data: ${serverFilename}...`);
+    if (!exists) {
+        updateStatus(`Downloading ${serverFilename}...`);
         
         try {
-            // Add timestamp to prevent browser caching of old 404s
+            // Anti-cache param
             const resp = await fetch(`assets/ephe/${serverFilename}?t=${Date.now()}`); 
-            
-            if (!resp.ok) {
-                throw new Error(`Server returned ${resp.status} for file: assets/ephe/${serverFilename}`);
-            }
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
             
             const buf = await resp.arrayBuffer();
-            const data = new Uint8Array(buf);
             
-            // WRITE DIRECTLY to the filename the engine wants
+            // CRITICAL SANITY CHECK: Ephemeris files are large (>100KB). 
+            // If it's small, it's likely a 404 HTML page in disguise.
+            if (buf.byteLength < 5000) {
+                throw new Error(`File too small (${buf.byteLength} bytes). Likely a 404 error page. Check GitHub file location.`);
+            }
+
+            const data = new Uint8Array(buf);
             swe.FS.writeFile(`/${engineFilename}`, data);
             
-            // Debug: Prove it's there
-            console.log(`✅ File System Write: /${engineFilename} (${data.length} bytes)`);
+            console.log(`✅ Loaded /${engineFilename} (${data.length} bytes)`);
             
         } catch (err) {
-            throw new Error(`Data fetch failed: ${err.message}`);
+            throw new Error(`Download failed for ${serverFilename}: ${err.message}`);
         }
     }
 }
 
-// 4. Run Query
+// 4. MAIN QUERY
 export async function runQuery() {
     if (!swe) { alert("Engine still loading..."); return; }
 
@@ -127,12 +132,15 @@ export async function runQuery() {
     lastResults = [];
 
     try {
-        // Pass bodyId so we know whether to fetch 'sepl' or 'semo'
+        // A. Load File
         await ensureDataForYear(startY, bodyId);
+        
+        // B. Force Path to Root (The Fix for 'File Not Found')
+        API.set_ephe_path('/');
 
+        // C. Calculation Loop
         const rows = [];
         const CAL_MODE = startY < 1582 ? 0 : 1; 
-        
         let currentJD = API.julday(startY, startM, startD, 12, CAL_MODE);
         const FLAGS = 2 | 256 | 2048; 
 
@@ -140,7 +148,7 @@ export async function runQuery() {
             const data = API.calc_ut(currentJD, bodyId, FLAGS);
             
             if (data.rc < 0) {
-                console.error(`Error at JD ${currentJD}:`, data.error);
+                console.error(`JD ${currentJD} Error:`, data.error);
                 rows.push({ 
                     date: "Error", jd: currentJD.toFixed(2), 
                     ra: data.error, dec: "", dist: "" 
@@ -176,7 +184,7 @@ export async function runQuery() {
     }
 }
 
-// 5. Download CSV
+// 5. CSV EXPORT
 export function downloadCSV() {
     if (!lastResults.length) return;
     let csv = "Date,JD,RA_deg,Dec_deg,Dist_AU,RA_hms,Dec_dms\n";
