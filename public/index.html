@@ -24,7 +24,15 @@
 
     <div id="output">Results will appear here...</div>
 
-    <script src="js/swisseph.js"></script>
-    <script src="js/app.js"></script>
+    <script type="module">
+    // Import the library directly
+    import SwissEph from './js/swisseph.js';
+    
+    // Import your logic
+    import { runCalculation } from './js/app.js';
+    
+    // Make runCalculation global so the button onclick works
+    window.runCalculation = runCalculation;
+</script>
 </body>
 </html>
