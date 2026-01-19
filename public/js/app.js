@@ -1,7 +1,6 @@
 import SwissEph from './swisseph.js';
 
 let swe = null;
-let lastResults = []; 
 
 // 1. Initialize
 SwissEph({
@@ -18,14 +17,14 @@ SwissEph({
 
 // 2. API Bridge
 const API = {
-    julday: (year, month, day, hour, calFlag) => {
-        return swe.ccall('swe_julday', 'number', ['number', 'number', 'number', 'number', 'number'], [year, month, day, hour, calFlag]);
-    },
+    julday: (year, month, day, hour, calFlag) => 
+        swe.ccall('swe_julday', 'number', ['number','number','number','number','number'], [year, month, day, hour, calFlag]),
+    
     calc_ut: (jd, body, flags) => {
         const resPtr = swe._malloc(48);
         const errPtr = swe._malloc(256);
         try {
-            const rc = swe.ccall('swe_calc_ut', 'number', ['number', 'number', 'number', 'number', 'number'], [jd, body, flags, resPtr, errPtr]);
+            const rc = swe.ccall('swe_calc_ut', 'number', ['number','number','number','number','number'], [jd, body, flags, resPtr, errPtr]);
             if (rc < 0) return { rc, error: swe.UTF8ToString(errPtr) };
             const data = [];
             for (let i = 0; i < 6; i++) { data.push(swe.HEAPF64[(resPtr >> 3) + i]); }
@@ -34,81 +33,73 @@ const API = {
             swe._free(resPtr); swe._free(errPtr);
         }
     },
+    
     revjul: (jd, calFlag) => {
          const yrPtr = swe._malloc(4); const moPtr = swe._malloc(4);
          const dyPtr = swe._malloc(4); const utPtr = swe._malloc(8);
          try {
-             swe.ccall('swe_revjul', null, ['number', 'number', 'number', 'number', 'number', 'number'], [jd, calFlag, yrPtr, moPtr, dyPtr, utPtr]);
-             return { year: swe.HEAP32[yrPtr >> 2], month: swe.HEAP32[moPtr >> 2], day: swe.HEAP32[dyPtr >> 2], hour: swe.HEAPF64[utPtr >> 3] };
+             swe.ccall('swe_revjul', null, ['number','number','number','number','number','number'], [jd, calFlag, yrPtr, moPtr, dyPtr, utPtr]);
+             return { year: swe.HEAP32[yrPtr >> 2], month: swe.HEAP32[moPtr >> 2], day: swe.HEAP32[dyPtr >> 2] };
          } finally {
              swe._free(yrPtr); swe._free(moPtr); swe._free(dyPtr); swe._free(utPtr);
          }
     },
+    
     set_ephe_path: (path) => {
-        try { swe.ccall('swe_set_ephe_path', null, ['string'], [path]); } catch (e) { console.error(e); }
+        try { swe.ccall('swe_set_ephe_path', null, ['string'], [path]); } catch(e){ console.error(e); }
     }
 };
 
-// 3. File Manager
+// 3. FILE MANAGER (STRICT: NO UNDERSCORES)
 async function ensureDataForYear(year, bodyId) {
     if (year >= -600) return; 
 
-    // Determine Prefix
-    const prefix = (bodyId === 1) ? 'semo' : 'sepl';
+    // 1. Calculate Prefix & Century
+    const isMoon = (bodyId === 1);
+    const prefix = isMoon ? 'semo' : 'sepl';
+    
     const baseYear = Math.floor(year / 600) * 600;
     const century = Math.abs(baseYear / 100); 
-    
-    // FILENAME: NO UNDERSCORES (e.g. seplm36.se1.bin)
-    const filename = `${prefix}m${century}.se1.bin`;
-    
-    // URL: assets/ephe/... (NO 'public')
-    const url = `assets/ephe/${filename}`;
 
-    // INTERNAL PATH: /ephe/seplm36.se1
-    const vfsPath = `/ephe/${prefix}m${century}.se1`;
+    // 2. CONSTRUCT NAMES (NO UNDERSCORES ANYWHERE)
     
+    // SERVER: semom36.se1.bin / seplm36.se1.bin
+    const serverFilename = `${prefix}m${century}.se1.bin`;
+    
+    // ENGINE: semom36.se1 / seplm36.se1 (No .bin)
+    const engineFilename = `${prefix}m${century}.se1`;
+
+    const vfsPath = `/ephe/${engineFilename}`;
+    const url = `assets/ephe/${serverFilename}`;
+
+    // 3. Check Memory
     let exists = false;
     try { swe.FS.stat(vfsPath); exists = true; } catch(e){}
 
     if (!exists) {
-        updateStatus(`Downloading ${filename}...`);
+        updateStatus(`Downloading ${serverFilename}...`);
         
         try {
-            // Anti-cache timestamp
-            const resp = await fetch(`${url}?t=${Date.now()}`); 
-            
-            if (!resp.ok) {
-                // If the "No Underscore" version fails, try the "Underscore" version as a fallback
-                // This covers the specific case where Moon might still be named differently on the server
-                const fallbackUrl = `assets/ephe/${prefix}_m${century}.se1.bin`;
-                console.warn(`Failed ${url}, trying fallback: ${fallbackUrl}`);
-                const resp2 = await fetch(`${fallbackUrl}?t=${Date.now()}`);
-                
-                if (resp2.ok) {
-                    const buf2 = await resp2.arrayBuffer();
-                    swe.FS.writeFile(vfsPath, new Uint8Array(buf2));
-                    console.log(`✅ Loaded Fallback: ${fallbackUrl}`);
-                    return;
-                }
-                
-                throw new Error(`404 Not Found: ${url}`);
-            }
+            const resp = await fetch(`${url}?t=${Date.now()}`);
+            if (!resp.ok) throw new Error(`404 Not Found: ${url}`);
             
             const buf = await resp.arrayBuffer();
-            if (buf.byteLength < 5000) throw new Error("File too small. Likely HTML error.");
+            if (buf.byteLength < 5000) throw new Error("File too small (likely HTML error).");
 
+            // Save WITHOUT the .bin extension so the engine recognizes it
             swe.FS.writeFile(vfsPath, new Uint8Array(buf));
-            console.log(`✅ Loaded ${url} -> ${vfsPath}`);
+            console.log(`✅ Mapped: ${url} -> ${vfsPath}`);
             
         } catch (err) {
-            document.querySelector('#resultsTable tbody').innerHTML = 
-                `<tr><td colspan="5" style="color:red; font-weight:bold;">FAILED: ${url} <br> ${err.message}</td></tr>`;
+            const tbody = document.querySelector('#resultsTable tbody');
+            tbody.innerHTML = `<tr><td colspan="5" style="color:red; font-weight:bold;">FAILED TO LOAD: ${serverFilename}<br><small>URL: ${url}</small></td></tr>`;
             throw err;
         }
     }
 }
 
 // 4. Main Query
+let lastResults = []; 
 export async function runQuery() {
     if (!swe) { alert("Engine still loading..."); return; }
 
@@ -125,7 +116,6 @@ export async function runQuery() {
     try {
         await ensureDataForYear(startY, bodyId);
         
-        // Point engine to /ephe folder
         API.set_ephe_path('/ephe');
 
         const rows = [];
@@ -153,11 +143,9 @@ export async function runQuery() {
             }
             currentJD += stepSz;
         }
-
         renderTable(rows);
         document.getElementById('dlBtn').disabled = false;
         updateStatus(`Done. Generated ${rows.length} steps.`);
-
     } catch (err) {
         console.error(err);
         updateStatus("Error: " + err.message);
