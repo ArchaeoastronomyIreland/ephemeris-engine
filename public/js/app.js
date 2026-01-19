@@ -49,56 +49,49 @@ const API = {
     }
 };
 
-// 3. Robust File Downloader
+// 3. File Manager
 async function ensureDataForYear(year, bodyId) {
     if (year >= -600) return; 
 
-    const prefix = (bodyId === 1) ? 'semo' : 'sepl';
+    // Determine Prefix
+    const isMoon = (bodyId === 1);
+    const prefix = isMoon ? 'semo' : 'sepl';
+    
+    // Calculate Century 
     const baseYear = Math.floor(year / 600) * 600;
     const century = Math.abs(baseYear / 100); 
     
-    // Strict Filename (No underscores, as per your repo)
-    const filename = `${prefix}m${century}.se1.bin`; 
-    const vfsPath = `/ephe/${prefix}m${century}.se1`;
+    // NO UNDERSCORES. Format: seplm36.se1.bin
+    const filename = `${prefix}m${century}.se1.bin`;
     
-    // Check if loaded
+    // Path: public/assets/ephe/
+    const url = `public/assets/ephe/${filename}`;
+
+    // Internal Path
+    const engineName = `${prefix}m${century}.se1`;
+    const vfsPath = `/ephe/${engineName}`;
+    
     let exists = false;
     try { swe.FS.stat(vfsPath); exists = true; } catch(e){}
 
     if (!exists) {
-        // STRATEGY: Try Standard Path -> Then Try "public/" Path
-        const pathsToTry = [
-            `assets/ephe/${filename}`,        // Standard
-            `public/assets/ephe/${filename}`  // GitHub Pages Raw Repo Structure
-        ];
-
-        let buffer = null;
-        let usedUrl = "";
-
         updateStatus(`Downloading ${filename}...`);
+        
+        try {
+            const resp = await fetch(`${url}?t=${Date.now()}`); 
+            if (!resp.ok) throw new Error(`404 Not Found: ${url}`);
+            
+            const buf = await resp.arrayBuffer();
+            if (buf.byteLength < 5000) throw new Error("File too small. Likely HTML error.");
 
-        for (const url of pathsToTry) {
-            try {
-                // Time-stamp to bust cache
-                const resp = await fetch(`${url}?t=${Date.now()}`);
-                if (resp.ok) {
-                    const tempBuf = await resp.arrayBuffer();
-                    if (tempBuf.byteLength > 5000) {
-                        buffer = tempBuf;
-                        usedUrl = url;
-                        break; // Success!
-                    }
-                }
-            } catch (e) { console.warn(`Failed fetch: ${url}`); }
+            swe.FS.writeFile(vfsPath, new Uint8Array(buf));
+            console.log(`✅ Loaded ${url} -> ${vfsPath}`);
+            
+        } catch (err) {
+            document.querySelector('#resultsTable tbody').innerHTML = 
+                `<tr><td colspan="5" style="color:red; font-weight:bold;">FAILED: ${url} <br> ${err.message}</td></tr>`;
+            throw err;
         }
-
-        if (!buffer) {
-            throw new Error(`404 Not Found. Checked: ${pathsToTry.join(' AND ')}`);
-        }
-
-        // Save to engine memory
-        swe.FS.writeFile(vfsPath, new Uint8Array(buffer));
-        console.log(`✅ Loaded from ${usedUrl}`);
     }
 }
 
@@ -118,6 +111,8 @@ export async function runQuery() {
 
     try {
         await ensureDataForYear(startY, bodyId);
+        
+        // Point engine to /ephe folder
         API.set_ephe_path('/ephe');
 
         const rows = [];
@@ -127,7 +122,9 @@ export async function runQuery() {
 
         for (let i = 0; i < count; i++) {
             const data = API.calc_ut(currentJD, bodyId, FLAGS);
+            
             if (data.rc < 0) {
+                console.error(`JD ${currentJD} Error:`, data.error);
                 rows.push({ date: "Error", jd: currentJD.toFixed(2), ra: data.error, dec: "", dist: "" });
             } else {
                 const [ra, dec, dist] = data.result;
