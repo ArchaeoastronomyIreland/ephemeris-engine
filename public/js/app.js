@@ -1,25 +1,26 @@
-// 1. Import the library directly (Must use ./ to indicate current folder)
+// 1. Import the library directly
 import SwissEph from './swisseph.js';
 
 let swe = null;
 
 // 2. Initialize the WebAssembly Engine
 SwissEph({
-    // This tells the browser where to find 'swisseph.wasm'
-    // Since index.html is in root, we look inside the 'js/' folder
-    locateFile: (path) => `js/${path}`,
+    // This tells the browser where to find 'swisseph.wasm' relative to index.html
+    locateFile: (path) => {
+        if (path.includes('js/')) return path;
+        return `js/${path}`;
+    }
 }).then(module => {
     swe = module;
-    // Update UI to show we are ready
     const status = document.getElementById('status');
     if (status) status.innerText = "Engine Ready. Waiting for input.";
-    console.log("Wasm Module Initialized");
+    console.log("✅ Wasm Module Loaded");
 });
 
-// 3. EXPORT the function so index.html can import it
+// 3. EXPORT the function so index.html can use it
 export async function runCalculation() {
     if (!swe) {
-        alert("Engine still loading...");
+        alert("Engine still loading... please wait.");
         return;
     }
 
@@ -32,54 +33,52 @@ export async function runCalculation() {
 
     try {
         status.innerText = "⏳ Processing...";
+        output.innerText = "Starting calculation...";
 
-        // --- PART A: DATA HYDRATION (The "Archaeo" Logic) ---
+        // --- PART A: DATA HYDRATION (ARCHAEO LOGIC) ---
         // If year is between -3000 and -2400, we need the ancient file
         if (year < -2400 && year >= -3000) {
             const filename = 'sepl_m30.se1';
-            const vfsPath = `/ephe/${filename}`; // Virtual path inside Wasm
+            
+            // NOTE: We write to the ROOT (/) of the virtual system
+            // This allows the engine to find it without needing 'swe_set_ephe_path'
+            const vfsPath = `/${filename}`; 
             
             // Check if file is already loaded in memory
             let fileExists = false;
             try { 
                 swe.FS.stat(vfsPath); 
                 fileExists = true; 
-            } catch(e) { /* File missing, need to download */ }
+            } catch(e) { /* File missing, proceed to download */ }
 
             if (!fileExists) {
                 status.innerText = `⏳ Downloading ${filename}...`;
                 
-                // Fetch the .bin version from your server (GitHub Pages workaround)
+                // Fetch the .bin version from your server (GitHub Pages compatible)
                 const resp = await fetch(`assets/ephe/${filename}.bin`);
                 
                 if (!resp.ok) {
-                    throw new Error(`Ephemeris file not found: assets/ephe/${filename}.bin`);
+                    throw new Error(`Ephemeris file not found at: assets/ephe/${filename}.bin`);
                 }
                 
                 const buffer = await resp.arrayBuffer();
                 
-                // Create virtual directory if it doesn't exist
-                try { swe.FS.mkdir('/ephe'); } catch(e) {}
-                
-                // Write the binary data to the Wasm Virtual File System
+                // Write the binary data to the Root of the Wasm filesystem
                 swe.FS.writeFile(vfsPath, new Uint8Array(buffer));
-                console.log(`Hydrated ${filename}`);
+                console.log(`✅ Hydrated ${filename} to Virtual Root`);
             }
-            
-            // Tell the engine to look in the virtual /ephe folder
-            swe.swe_set_ephe_path('/ephe');
+            // Logic complete: Engine automatically checks root for files.
         }
         // -----------------------------------------------------
 
         // --- PART B: CALCULATION ---
         
         // 1. Calculate Julian Day (UT)
-        // Note: For 2500 BC, we assume Julian Calendar. 
-        // 12.0 = Noon
+        // For 2500 BC, we assume Julian Calendar. 12.0 = Noon.
         const julianDay = swe.swe_julday(year, 1, 1, 12, swe.SE_JUL_CAL);
         
         // 2. Set Flags
-        // SEFLG_SWIEPH: Use high-precision binary files
+        // SEFLG_SWIEPH: Use high-precision binary files (if present)
         // SEFLG_EQUATORIAL: Return RA/Dec (Standard for Astronomy)
         // SEFLG_SPEED: Calculate velocity
         const flags = swe.SEFLG_SWIEPH | swe.SEFLG_EQUATORIAL | swe.SEFLG_SPEED;
@@ -90,7 +89,7 @@ export async function runCalculation() {
         
         // --- PART C: OUTPUT ---
         if (data.rc < 0) {
-            output.innerText = `Error: ${data.error}`;
+            output.innerText = `Error: ${data.error}\n(Note: If error is 'file not found', the hydration step failed)`;
             status.innerText = "Calculation Failed";
         } else {
             const ra = data.result[0];   // Right Ascension (Degrees)
