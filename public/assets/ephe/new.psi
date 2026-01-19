@@ -1,0 +1,18 @@
+# Get all files ending in .se1 in the current directory
+$files = Get-ChildItem -Path . -Filter "*.se1"
+
+foreach ($file in $files) {
+    # Define the new name
+    $newName = $file.Name + ".bin"
+
+    # Check if the .bin version already exists
+    if (-not (Test-Path $newName)) {
+        Rename-Item -Path $file.FullName -NewName $newName
+        Write-Host "Renamed: $($file.Name) -> $newName" -ForegroundColor Green
+    } else {
+        Write-Host "Skipped: $newName (File already exists)" -ForegroundColor Yellow
+    }
+}
+
+Write-Host "Done."
+Read-Host -Prompt "Press Enter to exit"
