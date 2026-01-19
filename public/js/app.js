@@ -11,11 +11,12 @@ SwissEph({
     }
 }).then(module => {
     swe = module;
-    updateStatus("Engine Online. Ready.");
+    const status = document.getElementById('status');
+    if (status) status.innerText = "Engine Online. Ready.";
     console.log("✅ Wasm Module Initialized");
 });
 
-// 2. API BRIDGE (Direct C-Calls)
+// 2. API BRIDGE
 const API = {
     julday: (year, month, day, hour, calFlag) => {
         return swe.ccall('swe_julday', 'number', 
@@ -24,8 +25,8 @@ const API = {
         );
     },
     calc_ut: (jd, body, flags) => {
-        const resPtr = swe._malloc(48); // 6 doubles
-        const errPtr = swe._malloc(256); // Error string
+        const resPtr = swe._malloc(48);
+        const errPtr = swe._malloc(256);
         try {
             const rc = swe.ccall('swe_calc_ut', 'number',
                 ['number', 'number', 'number', 'number', 'number'],
@@ -60,19 +61,10 @@ const API = {
          } finally {
              swe._free(yrPtr); swe._free(moPtr); swe._free(dyPtr); swe._free(utPtr);
          }
-    },
-    // CRITICAL FIX: Set the internal path to Root (/)
-    set_ephe_path: (path) => {
-        try {
-            swe.ccall('swe_set_ephe_path', null, ['string'], [path]);
-            console.log(`✅ Path forced to: ${path}`);
-        } catch (e) {
-            console.warn("Could not set path:", e);
-        }
     }
 };
 
-// 3. SMART FILE MANAGER
+// 3. SMART FILE MANAGER (THE FIX)
 async function ensureDataForYear(year, bodyId) {
     if (year >= -600) return; 
 
@@ -81,39 +73,38 @@ async function ensureDataForYear(year, bodyId) {
     const baseYear = Math.floor(year / 600) * 600;
     const century = Math.abs(baseYear / 100); 
     
-    // Server file: sepl_m36.se1.bin
+    // Server Filename (Must match GitHub exactly)
     const serverFilename = `${prefix}_m${century}.se1.bin`;
-    // Engine file: seplm36.se1 (No underscore)
+    
+    // Engine Filename (What the C-code asks for)
     const engineFilename = `${prefix}m${century}.se1`; 
     
-    // Check if file exists in Virtual FS
+    // Check if file exists in Virtual FS (Check Current Dir relative)
     let exists = false;
-    try { swe.FS.stat(`/${engineFilename}`); exists = true; } catch(e){}
+    try { swe.FS.stat(engineFilename); exists = true; } catch(e){}
 
     if (!exists) {
         updateStatus(`Downloading ${serverFilename}...`);
         
         try {
-            // Fetch with timestamp to prevent caching old 404s
             const resp = await fetch(`assets/ephe/${serverFilename}?t=${Date.now()}`); 
-            
-            if (!resp.ok) {
-                throw new Error(`HTTP Error ${resp.status} fetching ${serverFilename}`);
-            }
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
             
             const buf = await resp.arrayBuffer();
-            
-            // SANITY CHECK: If file is tiny (<5KB), it's likely an HTML 404 page
-            if (buf.byteLength < 5000) {
-                throw new Error(`File is too small (${buf.byteLength} bytes). This is likely a 404 error page, not the binary file.`);
-            }
+            if (buf.byteLength < 5000) throw new Error("File too small (likely 404 HTML).");
 
             const data = new Uint8Array(buf);
             
-            // Write to Root using the Engine's preferred name (No Underscore)
+            // --- THE SHOTGUN FIX ---
+            // We write the file to MULTIPLE paths to guarantee the engine finds it.
+            
+            // 1. Current Working Directory (Fixes 'not found in .')
+            swe.FS.writeFile(engineFilename, data);
+            
+            // 2. Root Directory (Safety backup)
             swe.FS.writeFile(`/${engineFilename}`, data);
             
-            console.log(`✅ Hydrated /${engineFilename} (${data.length} bytes)`);
+            console.log(`✅ File written to Virtual FS: ${engineFilename}`);
             
         } catch (err) {
             throw new Error(`Download failed: ${err.message}`);
@@ -121,7 +112,7 @@ async function ensureDataForYear(year, bodyId) {
     }
 }
 
-// 4. MAIN QUERY EXPORT
+// 4. MAIN QUERY
 export async function runQuery() {
     if (!swe) { alert("Engine still loading..."); return; }
 
@@ -138,13 +129,8 @@ export async function runQuery() {
     lastResults = [];
 
     try {
-        // A. Ensure File is Loaded
         await ensureDataForYear(startY, bodyId);
         
-        // B. FORCE PATH TO ROOT (Fixes the "Path not found" error)
-        API.set_ephe_path('/');
-
-        // C. Loop
         const rows = [];
         const CAL_MODE = startY < 1582 ? 0 : 1; 
         let currentJD = API.julday(startY, startM, startD, 12, CAL_MODE);
@@ -209,7 +195,6 @@ export function downloadCSV() {
     document.body.removeChild(a);
 }
 
-// UTILS
 function renderTable(rows) {
     const tbody = document.querySelector('#resultsTable tbody');
     tbody.innerHTML = rows.map(r => `

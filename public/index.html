@@ -10,7 +10,6 @@
 <div class="app-container">
     <aside class="sidebar">
         <h2>🔭 Query Parameters</h2>
-        
         <div class="control-group">
             <label>Target Body</label>
             <select id="bodySelect">
@@ -23,7 +22,6 @@
                 <option value="6">Saturn</option>
             </select>
         </div>
-
         <div class="control-group">
             <label>Start Date (UT)</label>
             <div class="date-row">
@@ -39,7 +37,6 @@
                 <input type="number" id="startDay" value="1" min="1" max="31">
             </div>
         </div>
-
         <div class="control-group">
             <label>Steps</label>
             <div class="step-row">
@@ -51,12 +48,10 @@
                 </select>
             </div>
         </div>
-
         <div class="control-group">
             <button id="calcBtn" onclick="runQuery()">Generate Ephemeris</button>
             <button id="dlBtn" onclick="downloadCSV()" disabled class="secondary-btn">Download CSV</button>
         </div>
-
         <div id="status" class="status-box">Initializing Engine...</div>
     </aside>
 
@@ -84,7 +79,7 @@
 </div>
 
 <script type="module">
-    import { runQuery, downloadCSV } from './js/app.js?v=FINAL_FIX';
+    import { runQuery, downloadCSV } from './js/app.js?v=WORKING';
     window.runQuery = runQuery;
     window.downloadCSV = downloadCSV;
 </script>
