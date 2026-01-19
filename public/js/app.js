@@ -1,3 +1,5 @@
+// public/js/app.js
+
 // 1. Import the library directly
 import SwissEph from './swisseph.js';
 
@@ -7,6 +9,7 @@ let swe = null;
 SwissEph({
     // This tells the browser where to find 'swisseph.wasm' relative to index.html
     locateFile: (path) => {
+        // Ensure we look in the js/ folder for the wasm file
         if (path.includes('js/')) return path;
         return `js/${path}`;
     }
@@ -74,8 +77,9 @@ export async function runCalculation() {
         // --- PART B: CALCULATION ---
         
         // 1. Calculate Julian Day (UT)
+        // FIX: Using 'julday' instead of 'swe_julday'
         // For 2500 BC, we assume Julian Calendar. 12.0 = Noon.
-        const julianDay = swe.swe_julday(year, 1, 1, 12, swe.SE_JUL_CAL);
+        const julianDay = swe.julday(year, 1, 1, 12, swe.SE_JUL_CAL);
         
         // 2. Set Flags
         // SEFLG_SWIEPH: Use high-precision binary files (if present)
@@ -84,8 +88,9 @@ export async function runCalculation() {
         const flags = swe.SEFLG_SWIEPH | swe.SEFLG_EQUATORIAL | swe.SEFLG_SPEED;
         
         // 3. Calculate Mars (Body ID: 4)
+        // FIX: Using 'calc_ut' instead of 'swe_calc_ut'
         // returns { rc: number, result: [long/RA, lat/Dec, dist, speed...] }
-        const data = swe.swe_calc_ut(julianDay, swe.SE_MARS, flags);
+        const data = swe.calc_ut(julianDay, swe.SE_MARS, flags);
         
         // --- PART C: OUTPUT ---
         if (data.rc < 0) {
