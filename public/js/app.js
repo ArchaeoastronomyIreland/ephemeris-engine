@@ -2,7 +2,7 @@ import SwissEph from './swisseph.js';
 
 let swe = null;
 
-// 1. Initialize
+// 1. Initialize & Configure Immediately
 SwissEph({
     locateFile: (path) => {
         if (path.includes('js/')) return path;
@@ -10,9 +10,16 @@ SwissEph({
     }
 }).then(module => {
     swe = module;
+    
+    // A. Create the virtual folder immediately
     try { swe.FS.mkdir('/ephe'); } catch(e) {} 
-    updateStatus("Engine Online. Ready.");
-    console.log("✅ Wasm Module Initialized");
+
+    // B. Set the path IMMEDIATELY (Fixes the "Moon First" bug)
+    // The engine now knows to look in /ephe before you ever click a button.
+    swe.ccall('swe_set_ephe_path', null, ['string'], ['/ephe']);
+
+    updateStatus("Engine Online. Path set to /ephe.");
+    console.log("✅ Wasm Module Initialized & Path Configured");
 });
 
 // 2. API Bridge
@@ -43,56 +50,46 @@ const API = {
          } finally {
              swe._free(yrPtr); swe._free(moPtr); swe._free(dyPtr); swe._free(utPtr);
          }
-    },
-    
-    set_ephe_path: (path) => {
-        try { swe.ccall('swe_set_ephe_path', null, ['string'], [path]); } catch(e){ console.error(e); }
     }
 };
 
-// 3. FILE MANAGER (STRICT: NO UNDERSCORES)
+// 3. File Manager
 async function ensureDataForYear(year, bodyId) {
     if (year >= -600) return; 
 
-    // 1. Calculate Prefix & Century
+    // 1. Logic
     const isMoon = (bodyId === 1);
     const prefix = isMoon ? 'semo' : 'sepl';
-    
     const baseYear = Math.floor(year / 600) * 600;
     const century = Math.abs(baseYear / 100); 
 
-    // 2. CONSTRUCT NAMES (NO UNDERSCORES ANYWHERE)
-    
-    // SERVER: semom36.se1.bin / seplm36.se1.bin
-    const serverFilename = `${prefix}m${century}.se1.bin`;
-    
-    // ENGINE: semom36.se1 / seplm36.se1 (No .bin)
-    const engineFilename = `${prefix}m${century}.se1`;
-
-    const vfsPath = `/ephe/${engineFilename}`;
-    const url = `assets/ephe/${serverFilename}`;
+    // 2. Names (Zero Underscore as requested)
+    // Server: seplm36.se1.bin
+    const filename = `${prefix}m${century}.se1.bin`;
+    // URL: assets/ephe/...
+    const url = `assets/ephe/${filename}`;
+    // Internal: /ephe/seplm36.se1
+    const vfsPath = `/ephe/${prefix}m${century}.se1`;
 
     // 3. Check Memory
     let exists = false;
     try { swe.FS.stat(vfsPath); exists = true; } catch(e){}
 
     if (!exists) {
-        updateStatus(`Downloading ${serverFilename}...`);
-        
+        updateStatus(`Downloading ${filename}...`);
         try {
             const resp = await fetch(`${url}?t=${Date.now()}`);
             if (!resp.ok) throw new Error(`404 Not Found: ${url}`);
             
             const buf = await resp.arrayBuffer();
-            if (buf.byteLength < 5000) throw new Error("File too small (likely HTML error).");
+            if (buf.byteLength < 5000) throw new Error("File too small.");
 
-            // Save WITHOUT the .bin extension so the engine recognizes it
             swe.FS.writeFile(vfsPath, new Uint8Array(buf));
-            console.log(`✅ Mapped: ${url} -> ${vfsPath}`);
+            console.log(`✅ Loaded ${url} -> ${vfsPath}`);
             
         } catch (err) {
-            const tbody = document.querySelector('#resultsTable tbody');
-            tbody.innerHTML = `<tr><td colspan="5" style="color:red; font-weight:bold;">FAILED TO LOAD: ${serverFilename}<br><small>URL: ${url}</small></td></tr>`;
+            document.querySelector('#resultsTable tbody').innerHTML = 
+                `<tr><td colspan="5" style="color:red; font-weight:bold;">FAILED TO LOAD: ${filename}<br><small>${err.message}</small></td></tr>`;
             throw err;
         }
     }
@@ -116,7 +113,7 @@ export async function runQuery() {
     try {
         await ensureDataForYear(startY, bodyId);
         
-        API.set_ephe_path('/ephe');
+        // (Path is already set globally in Init, no need to set here)
 
         const rows = [];
         const CAL_MODE = startY < 1582 ? 0 : 1; 
