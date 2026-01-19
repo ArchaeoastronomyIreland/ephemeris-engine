@@ -1,34 +1,21 @@
 import SwissEph from './swisseph.js';
 
-// GLOBAL STATE
 let swe = null;
-let lastResults = [];
 
-/**
- * 1. INITIALIZATION
- * This loads the WASM module and sets the internal path ONCE.
- */
+// 1. INITIALIZE & SET PATH
 SwissEph({
     locateFile: (path) => path.includes('js/') ? path : `js/${path}`
 }).then(module => {
     swe = module;
-    
-    // CRITICAL: Set the internal search path to the Virtual Root (/)
-    // The engine will now ONLY look in the root of its virtual memory.
-    // We do this once, on startup.
-    try {
-        swe.ccall('swe_set_ephe_path', null, ['string'], ['/']);
-        console.log("✅ Engine Configured: Path set to Virtual Root (/)");
-    } catch (e) {
-        console.error("❌ Engine Path Config Failed:", e);
-    }
-    
-    updateStatus("Engine Online. Ready.");
+    // Force path to Root (/) immediately
+    try { swe.ccall('swe_set_ephe_path', null, ['string'], ['/']); } catch(e){}
+    updateStatus("Engine Online.");
+    console.log("✅ Wasm Module Initialized");
 });
 
-// 2. API BRIDGE (Direct mapping to C functions)
+// 2. API BRIDGE
 const API = {
-    julday: (y, m, d, h, flag) => swe.ccall('swe_julday', 'number', ['number','number','number','number','number'], [y, m, d, h, flag]),
+    julday: (y, m, d, h, f) => swe.ccall('swe_julday', 'number', ['number','number','number','number','number'], [y, m, d, h, f]),
     
     calc_ut: (jd, body, flags) => {
         const resPtr = swe._malloc(48);
@@ -44,10 +31,10 @@ const API = {
         }
     },
     
-    revjul: (jd, flag) => {
+    revjul: (jd, f) => {
          const yr=swe._malloc(4), mo=swe._malloc(4), dy=swe._malloc(4), ut=swe._malloc(8);
          try {
-             swe.ccall('swe_revjul', null, ['number','number','number','number','number','number'], [jd, flag, yr, mo, dy, ut]);
+             swe.ccall('swe_revjul', null, ['number','number','number','number','number','number'], [jd, f, yr, mo, dy, ut]);
              return { year: swe.HEAP32[yr>>2], month: swe.HEAP32[mo>>2], day: swe.HEAP32[dy>>2] };
          } finally {
              swe._free(yr); swe._free(mo); swe._free(dy); swe._free(ut);
@@ -55,66 +42,55 @@ const API = {
     }
 };
 
-/**
- * 3. DATA MANAGER
- * Handles the transfer from GitHub (Server) to WASM (Memory).
- */
+// 3. DATA MANAGER (STRICTLY NO UNDERSCORES)
 async function ensureDataForYear(year, bodyId) {
-    if (year >= -600) return; // Standard range doesn't need files
+    if (year >= -600) return; 
 
-    // 1. Determine Century (e.g., -3500 -> 36)
+    // Constants
+    const prefix = (bodyId === 1) ? 'semo' : 'sepl';
     const baseYear = Math.floor(year / 600) * 600;
     const century = Math.abs(baseYear / 100); 
 
-    // 2. Determine Filenames based on Body Type
-    // Moon (id 1) = 'semo', Planets = 'sepl'
-    const prefix = (bodyId === 1) ? 'semo' : 'sepl';
+    // TARGET NAME: semom36.se1 (No underscore, No .bin)
+    // This is what the engine is asking for in your logs.
+    const engineName = `${prefix}m${century}.se1`;
     
-    // SERVER FILE: Your repo uses NO underscores and .bin extension
-    // Example: seplm36.se1.bin
+    // SERVER NAME: semom36.se1.bin (No underscore, Has .bin)
+    // This is what you confirmed is on the server.
     const serverName = `${prefix}m${century}.se1.bin`;
     
-    // ENGINE FILE: The engine expects standard name (NO .bin)
-    // Example: seplm36.se1
-    const engineName = `${prefix}m${century}.se1`;
-
-    // 3. Check Virtual Memory
-    // We look in the Root (/) because that is where we configured the engine to look.
+    const url = `assets/ephe/${serverName}`;
+    
+    // Check if we already have it in Root
     let exists = false;
     try { swe.FS.stat(`/${engineName}`); exists = true; } catch(e){}
 
     if (!exists) {
-        // 4. Download from GitHub
-        // Path is relative to index.html -> assets/ephe/
-        const url = `assets/ephe/${serverName}`;
-        updateStatus(`Downloading data: ${serverName}...`);
+        updateStatus(`Downloading ${serverName}...`);
         
         try {
-            const resp = await fetch(`${url}?t=${Date.now()}`); // timestamp prevents caching
-            if (!resp.ok) throw new Error(`HTTP ${resp.status} - File not found: ${url}`);
+            const resp = await fetch(`${url}?t=${Date.now()}`);
+            if (!resp.ok) throw new Error(`404 Not Found: ${url}`);
             
             const buf = await resp.arrayBuffer();
-            
-            // Sanity Check: 404 pages are small (<5KB), valid binary files are large (~100KB+)
-            if (buf.byteLength < 5000) throw new Error("File too small. Likely a 404 HTML page.");
+            if (buf.byteLength < 5000) throw new Error("File too small.");
 
-            // 5. Write to Virtual Memory
-            // We strip the .bin extension here so the engine sees what it expects
+            // Write to Root (/) using the name the engine wants
             swe.FS.writeFile(`/${engineName}`, new Uint8Array(buf));
-            console.log(`✅ File Hydrated: ${url} -> /${engineName}`);
+            console.log(`✅ Loaded ${url} -> /${engineName}`);
             
         } catch (err) {
-            console.error(err);
-            throw new Error(`Failed to load ${serverName}. Ensure it exists in 'public/assets/ephe/' on GitHub.`);
+            document.querySelector('#resultsTable tbody').innerHTML = 
+                `<tr><td colspan="5" style="color:red; font-weight:bold;">FAILED: ${serverName}</td></tr>`;
+            throw err;
         }
     }
 }
 
-// 4. MAIN QUERY LOGIC
+// 4. MAIN QUERY
 export async function runQuery() {
     if (!swe) { alert("Engine initializing..."); return; }
 
-    // Inputs
     const bodyId = parseInt(document.getElementById('bodySelect').value);
     const startY = parseInt(document.getElementById('startYear').value);
     const startM = parseInt(document.getElementById('startMonth').value);
@@ -123,35 +99,32 @@ export async function runQuery() {
     const stepSz = parseFloat(document.getElementById('stepUnit').value);
 
     updateStatus("Computing...");
-    lastResults = [];
+    let lastResults = [];
 
     try {
-        // Step A: Ensure file is in memory
         await ensureDataForYear(startY, bodyId);
         
-        // Step B: Calculation Loop
+        // RE-FORCE PATH TO ROOT (Fixes the "Moon First" issue)
+        try { swe.ccall('swe_set_ephe_path', null, ['string'], ['/']); } catch(e){}
+
         const rows = [];
-        const CAL_MODE = startY < 1582 ? 0 : 1; // Julian vs Gregorian
+        const CAL_MODE = startY < 1582 ? 0 : 1; 
         let currentJD = API.julday(startY, startM, startD, 12, CAL_MODE);
-        const FLAGS = 2 | 256 | 2048; // SwissEph | Speed | Equator
+        const FLAGS = 2 | 256 | 2048; 
 
         for (let i = 0; i < count; i++) {
             const data = API.calc_ut(currentJD, bodyId, FLAGS);
             
             if (data.rc < 0) {
-                console.error(`Calculation Error at JD ${currentJD}: ${data.error}`);
+                console.error(`JD ${currentJD} Error:`, data.error);
                 rows.push({ date: "Error", jd: currentJD.toFixed(2), ra: data.error, dec: "", dist: "" });
             } else {
                 const [ra, dec, dist] = data.result;
                 const dateObj = API.revjul(currentJD, CAL_MODE);
                 const dateStr = `${dateObj.year}-${pad(dateObj.month)}-${pad(dateObj.day)}`;
-                
                 const rowData = {
-                    date: dateStr, 
-                    jd: currentJD.toFixed(2),
-                    ra: formatHMS(ra), 
-                    dec: formatDMS(dec), 
-                    dist: dist.toFixed(5),
+                    date: dateStr, jd: currentJD.toFixed(2),
+                    ra: formatHMS(ra), dec: formatDMS(dec), dist: dist.toFixed(5),
                     rawRA: ra, rawDec: dec
                 };
                 rows.push(rowData);
@@ -161,27 +134,25 @@ export async function runQuery() {
         }
 
         renderTable(rows);
+        window.lastResults = lastResults;
         document.getElementById('dlBtn').disabled = false;
-        updateStatus(`Success. Generated ${rows.length} steps.`);
+        updateStatus(`Done. Generated ${rows.length} steps.`);
 
     } catch (err) {
-        document.querySelector('#resultsTable tbody').innerHTML = 
-            `<tr><td colspan="5" style="color:red; text-align:center;">
-                <strong>System Error:</strong> ${err.message}
-            </td></tr>`;
-        updateStatus("Error.");
+        console.error(err);
+        updateStatus("Error: " + err.message);
     }
 }
 
-// UTILITIES
 export function downloadCSV() {
-    if (!lastResults.length) return;
-    let csv = "Date,JD,RA,Dec,Dist\n" + lastResults.map(r => `${r.date},${r.jd},"${r.ra}","${r.dec}",${r.dist}`).join("\n");
+    if (!window.lastResults || !window.lastResults.length) return;
+    let csv = "Date,JD,RA,Dec,Dist\n" + window.lastResults.map(r => `${r.date},${r.jd},"${r.ra}","${r.dec}",${r.dist}`).join("\n");
     const a = document.createElement('a');
     a.href = window.URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
     a.download = "ephemeris.csv";
     a.click();
 }
+
 function renderTable(rows) {
     document.querySelector('#resultsTable tbody').innerHTML = rows.map(r => `<tr><td>${r.date}</td><td>${r.jd}</td><td>${r.ra}</td><td>${r.dec}</td><td>${r.dist}</td></tr>`).join('');
 }
