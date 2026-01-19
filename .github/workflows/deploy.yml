@@ -1,0 +1,44 @@
+name: Deploy Archaeo-Engine
+
+on:
+  push:
+    branches: ["main"]
+
+# Grants permission to GitHub to publish your site
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      # 1. Download your code
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # 2. Install Node.js (needed to run your script)
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # 3. Run the "Hydration" Script
+      # This executes the init-structure.js you created earlier.
+      # It downloads the sepl_m30 file from Astro.com into the runner's memory.
+      - name: Hydrate Ephemeris Data
+        run: |
+          npm install
+          node init-structure.js
+
+      # 4. Upload the result to GitHub Pages
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: './public'
+
+      # 5. Deploy
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

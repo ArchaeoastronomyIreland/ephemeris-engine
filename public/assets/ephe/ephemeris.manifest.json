@@ -1,0 +1,10 @@
+{
+  "description": "Hydration Manifest for Archaeoastronomy",
+  "files": [
+    {
+      "file": "sepl_m30.se1",
+      "range": "-3000 to -2400",
+      "url": "public/assets/ephe/sepl_m30.se1.bin"
+    }
+  ]
+}
