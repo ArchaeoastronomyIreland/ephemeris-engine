@@ -1,31 +1,34 @@
 import SwissEph from './swisseph.js';
 
+// GLOBAL STATE
 let swe = null;
+let lastResults = [];
 
-// 1. Initialize & Configure Immediately
+/**
+ * 1. INITIALIZATION
+ * This loads the WASM module and sets the internal path ONCE.
+ */
 SwissEph({
-    locateFile: (path) => {
-        if (path.includes('js/')) return path;
-        return `js/${path}`;
-    }
+    locateFile: (path) => path.includes('js/') ? path : `js/${path}`
 }).then(module => {
     swe = module;
     
-    // A. Create the virtual folder immediately
-    try { swe.FS.mkdir('/ephe'); } catch(e) {} 
-
-    // B. Set the path IMMEDIATELY (Fixes the "Moon First" bug)
-    // The engine now knows to look in /ephe before you ever click a button.
-    swe.ccall('swe_set_ephe_path', null, ['string'], ['/ephe']);
-
-    updateStatus("Engine Online. Path set to /ephe.");
-    console.log("✅ Wasm Module Initialized & Path Configured");
+    // CRITICAL: Set the internal search path to the Virtual Root (/)
+    // The engine will now ONLY look in the root of its virtual memory.
+    // We do this once, on startup.
+    try {
+        swe.ccall('swe_set_ephe_path', null, ['string'], ['/']);
+        console.log("✅ Engine Configured: Path set to Virtual Root (/)");
+    } catch (e) {
+        console.error("❌ Engine Path Config Failed:", e);
+    }
+    
+    updateStatus("Engine Online. Ready.");
 });
 
-// 2. API Bridge
+// 2. API BRIDGE (Direct mapping to C functions)
 const API = {
-    julday: (year, month, day, hour, calFlag) => 
-        swe.ccall('swe_julday', 'number', ['number','number','number','number','number'], [year, month, day, hour, calFlag]),
+    julday: (y, m, d, h, flag) => swe.ccall('swe_julday', 'number', ['number','number','number','number','number'], [y, m, d, h, flag]),
     
     calc_ut: (jd, body, flags) => {
         const resPtr = swe._malloc(48);
@@ -34,72 +37,84 @@ const API = {
             const rc = swe.ccall('swe_calc_ut', 'number', ['number','number','number','number','number'], [jd, body, flags, resPtr, errPtr]);
             if (rc < 0) return { rc, error: swe.UTF8ToString(errPtr) };
             const data = [];
-            for (let i = 0; i < 6; i++) { data.push(swe.HEAPF64[(resPtr >> 3) + i]); }
+            for (let i = 0; i < 6; i++) data.push(swe.HEAPF64[(resPtr >> 3) + i]);
             return { rc, result: data };
         } finally {
             swe._free(resPtr); swe._free(errPtr);
         }
     },
     
-    revjul: (jd, calFlag) => {
-         const yrPtr = swe._malloc(4); const moPtr = swe._malloc(4);
-         const dyPtr = swe._malloc(4); const utPtr = swe._malloc(8);
+    revjul: (jd, flag) => {
+         const yr=swe._malloc(4), mo=swe._malloc(4), dy=swe._malloc(4), ut=swe._malloc(8);
          try {
-             swe.ccall('swe_revjul', null, ['number','number','number','number','number','number'], [jd, calFlag, yrPtr, moPtr, dyPtr, utPtr]);
-             return { year: swe.HEAP32[yrPtr >> 2], month: swe.HEAP32[moPtr >> 2], day: swe.HEAP32[dyPtr >> 2] };
+             swe.ccall('swe_revjul', null, ['number','number','number','number','number','number'], [jd, flag, yr, mo, dy, ut]);
+             return { year: swe.HEAP32[yr>>2], month: swe.HEAP32[mo>>2], day: swe.HEAP32[dy>>2] };
          } finally {
-             swe._free(yrPtr); swe._free(moPtr); swe._free(dyPtr); swe._free(utPtr);
+             swe._free(yr); swe._free(mo); swe._free(dy); swe._free(ut);
          }
     }
 };
 
-// 3. File Manager
+/**
+ * 3. DATA MANAGER
+ * Handles the transfer from GitHub (Server) to WASM (Memory).
+ */
 async function ensureDataForYear(year, bodyId) {
-    if (year >= -600) return; 
+    if (year >= -600) return; // Standard range doesn't need files
 
-    // 1. Logic
-    const isMoon = (bodyId === 1);
-    const prefix = isMoon ? 'semo' : 'sepl';
+    // 1. Determine Century (e.g., -3500 -> 36)
     const baseYear = Math.floor(year / 600) * 600;
     const century = Math.abs(baseYear / 100); 
 
-    // 2. Names (Zero Underscore as requested)
-    // Server: seplm36.se1.bin
-    const filename = `${prefix}m${century}.se1.bin`;
-    // URL: assets/ephe/...
-    const url = `assets/ephe/${filename}`;
-    // Internal: /ephe/seplm36.se1
-    const vfsPath = `/ephe/${prefix}m${century}.se1`;
+    // 2. Determine Filenames based on Body Type
+    // Moon (id 1) = 'semo', Planets = 'sepl'
+    const prefix = (bodyId === 1) ? 'semo' : 'sepl';
+    
+    // SERVER FILE: Your repo uses NO underscores and .bin extension
+    // Example: seplm36.se1.bin
+    const serverName = `${prefix}m${century}.se1.bin`;
+    
+    // ENGINE FILE: The engine expects standard name (NO .bin)
+    // Example: seplm36.se1
+    const engineName = `${prefix}m${century}.se1`;
 
-    // 3. Check Memory
+    // 3. Check Virtual Memory
+    // We look in the Root (/) because that is where we configured the engine to look.
     let exists = false;
-    try { swe.FS.stat(vfsPath); exists = true; } catch(e){}
+    try { swe.FS.stat(`/${engineName}`); exists = true; } catch(e){}
 
     if (!exists) {
-        updateStatus(`Downloading ${filename}...`);
+        // 4. Download from GitHub
+        // Path is relative to index.html -> assets/ephe/
+        const url = `assets/ephe/${serverName}`;
+        updateStatus(`Downloading data: ${serverName}...`);
+        
         try {
-            const resp = await fetch(`${url}?t=${Date.now()}`);
-            if (!resp.ok) throw new Error(`404 Not Found: ${url}`);
+            const resp = await fetch(`${url}?t=${Date.now()}`); // timestamp prevents caching
+            if (!resp.ok) throw new Error(`HTTP ${resp.status} - File not found: ${url}`);
             
             const buf = await resp.arrayBuffer();
-            if (buf.byteLength < 5000) throw new Error("File too small.");
+            
+            // Sanity Check: 404 pages are small (<5KB), valid binary files are large (~100KB+)
+            if (buf.byteLength < 5000) throw new Error("File too small. Likely a 404 HTML page.");
 
-            swe.FS.writeFile(vfsPath, new Uint8Array(buf));
-            console.log(`✅ Loaded ${url} -> ${vfsPath}`);
+            // 5. Write to Virtual Memory
+            // We strip the .bin extension here so the engine sees what it expects
+            swe.FS.writeFile(`/${engineName}`, new Uint8Array(buf));
+            console.log(`✅ File Hydrated: ${url} -> /${engineName}`);
             
         } catch (err) {
-            document.querySelector('#resultsTable tbody').innerHTML = 
-                `<tr><td colspan="5" style="color:red; font-weight:bold;">FAILED TO LOAD: ${filename}<br><small>${err.message}</small></td></tr>`;
-            throw err;
+            console.error(err);
+            throw new Error(`Failed to load ${serverName}. Ensure it exists in 'public/assets/ephe/' on GitHub.`);
         }
     }
 }
 
-// 4. Main Query
-let lastResults = []; 
+// 4. MAIN QUERY LOGIC
 export async function runQuery() {
-    if (!swe) { alert("Engine still loading..."); return; }
+    if (!swe) { alert("Engine initializing..."); return; }
 
+    // Inputs
     const bodyId = parseInt(document.getElementById('bodySelect').value);
     const startY = parseInt(document.getElementById('startYear').value);
     const startM = parseInt(document.getElementById('startMonth').value);
@@ -111,28 +126,32 @@ export async function runQuery() {
     lastResults = [];
 
     try {
+        // Step A: Ensure file is in memory
         await ensureDataForYear(startY, bodyId);
         
-        // (Path is already set globally in Init, no need to set here)
-
+        // Step B: Calculation Loop
         const rows = [];
-        const CAL_MODE = startY < 1582 ? 0 : 1; 
+        const CAL_MODE = startY < 1582 ? 0 : 1; // Julian vs Gregorian
         let currentJD = API.julday(startY, startM, startD, 12, CAL_MODE);
-        const FLAGS = 2 | 256 | 2048; 
+        const FLAGS = 2 | 256 | 2048; // SwissEph | Speed | Equator
 
         for (let i = 0; i < count; i++) {
             const data = API.calc_ut(currentJD, bodyId, FLAGS);
             
             if (data.rc < 0) {
-                console.error(`JD ${currentJD} Error:`, data.error);
+                console.error(`Calculation Error at JD ${currentJD}: ${data.error}`);
                 rows.push({ date: "Error", jd: currentJD.toFixed(2), ra: data.error, dec: "", dist: "" });
             } else {
                 const [ra, dec, dist] = data.result;
                 const dateObj = API.revjul(currentJD, CAL_MODE);
                 const dateStr = `${dateObj.year}-${pad(dateObj.month)}-${pad(dateObj.day)}`;
+                
                 const rowData = {
-                    date: dateStr, jd: currentJD.toFixed(2),
-                    ra: formatHMS(ra), dec: formatDMS(dec), dist: dist.toFixed(5),
+                    date: dateStr, 
+                    jd: currentJD.toFixed(2),
+                    ra: formatHMS(ra), 
+                    dec: formatDMS(dec), 
+                    dist: dist.toFixed(5),
                     rawRA: ra, rawDec: dec
                 };
                 rows.push(rowData);
@@ -140,15 +159,21 @@ export async function runQuery() {
             }
             currentJD += stepSz;
         }
+
         renderTable(rows);
         document.getElementById('dlBtn').disabled = false;
-        updateStatus(`Done. Generated ${rows.length} steps.`);
+        updateStatus(`Success. Generated ${rows.length} steps.`);
+
     } catch (err) {
-        console.error(err);
-        updateStatus("Error: " + err.message);
+        document.querySelector('#resultsTable tbody').innerHTML = 
+            `<tr><td colspan="5" style="color:red; text-align:center;">
+                <strong>System Error:</strong> ${err.message}
+            </td></tr>`;
+        updateStatus("Error.");
     }
 }
 
+// UTILITIES
 export function downloadCSV() {
     if (!lastResults.length) return;
     let csv = "Date,JD,RA,Dec,Dist\n" + lastResults.map(r => `${r.date},${r.jd},"${r.ra}","${r.dec}",${r.dist}`).join("\n");
@@ -157,7 +182,6 @@ export function downloadCSV() {
     a.download = "ephemeris.csv";
     a.click();
 }
-
 function renderTable(rows) {
     document.querySelector('#resultsTable tbody').innerHTML = rows.map(r => `<tr><td>${r.date}</td><td>${r.jd}</td><td>${r.ra}</td><td>${r.dec}</td><td>${r.dist}</td></tr>`).join('');
 }
