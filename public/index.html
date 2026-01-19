@@ -41,7 +41,7 @@
         </div>
 
         <div class="control-group">
-            <label>Duration / Steps</label>
+            <label>Steps</label>
             <div class="step-row">
                 <input type="number" id="stepCount" value="10">
                 <select id="stepUnit">
@@ -68,7 +68,7 @@
             <table id="resultsTable">
                 <thead>
                     <tr>
-                        <th>Date (UT)</th>
+                        <th>Date</th>
                         <th>Julian Day</th>
                         <th>R.A.</th>
                         <th>Dec.</th>
@@ -84,10 +84,7 @@
 </div>
 
 <script type="module">
-    import { runQuery, downloadCSV } from './js/app.js?v=3000';
-    
-    // EXPOSE TO GLOBAL SCOPE
-    // This connects the 'import' to the 'onclick' in the HTML above
+    import { runQuery, downloadCSV } from './js/app.js?v=FINAL_FIX';
     window.runQuery = runQuery;
     window.downloadCSV = downloadCSV;
 </script>
